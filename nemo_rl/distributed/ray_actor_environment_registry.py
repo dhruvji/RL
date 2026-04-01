@@ -13,26 +13,95 @@
 # limitations under the License.
 
 import os
+import sys
+from pathlib import Path
 
 from nemo_rl.distributed.virtual_cluster import PY_EXECUTABLES
 
+# Explicit override when auto-detection picks the wrong interpreter (e.g. conda base vs repo .venv).
+_ENV_WORKER_PYTHON = "NEMO_RL_WORKER_PYTHON"
+
+
+def _find_repo_dotvenv_python() -> str | None:
+    """Locate ``<repo>/.venv/bin/python`` by walking up from this file.
+
+    Works for editable checkouts (``.../nemo-rl/nemo_rl/distributed/...``). Fails for a plain
+    ``site-packages`` install (no repo ``.venv`` on the path), in which case env vars / ``sys.executable``
+    apply.
+    """
+    p = Path(__file__).resolve().parent
+    for _ in range(24):
+        vpy = p / ".venv" / "bin" / "python"
+        if (
+            vpy.is_file()
+            and (p / "nemo_rl").is_dir()
+            and (p / "pyproject.toml").is_file()
+        ):
+            return str(vpy)
+        if p.parent == p:
+            break
+        p = p.parent
+    return None
+
+
+def _resolved_project_python_executable() -> str:
+    """Interpreter that has project deps (e.g. nemo-automodel) when using the same env as the driver.
+
+    With ``uv run``, ``sys.executable`` is often uv's managed CPython under ``~/.local/share/uv/python``,
+    which does not see packages installed into the repo ``.venv``.
+
+    Resolution order:
+
+    1. ``NEMO_RL_WORKER_PYTHON`` if set to an existing file.
+    2. Walk upward from this module to a NeMo RL repo root containing ``.venv/bin/python`` (prefers the
+       project venv over ``CONDA_PREFIX`` when that points at ``base`` without automodel extras).
+    3. ``VIRTUAL_ENV``, ``UV_PROJECT_ENVIRONMENT``, ``CONDA_PREFIX`` (``bin/python``).
+    4. ``sys.executable``.
+    """
+    override = os.environ.get(_ENV_WORKER_PYTHON)
+    if override:
+        o = Path(override)
+        if o.is_file():
+            return str(o)
+
+    repo_venv = _find_repo_dotvenv_python()
+    if repo_venv is not None:
+        return repo_venv
+
+    for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "CONDA_PREFIX"):
+        root = os.environ.get(key)
+        if root:
+            candidate = Path(root) / "bin" / "python"
+            if candidate.is_file():
+                return str(candidate)
+    return sys.executable
+
+
+_PROJECT_PYTHON = _resolved_project_python_executable()
+
 USE_SYSTEM_EXECUTABLE = os.environ.get("NEMO_RL_PY_EXECUTABLES_SYSTEM", "0") == "1"
 VLLM_EXECUTABLE = (
-    PY_EXECUTABLES.SYSTEM if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.VLLM
+    _PROJECT_PYTHON if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.VLLM
 )
 SGLANG_EXECUTABLE = (
-    PY_EXECUTABLES.SYSTEM if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.SGLANG
+    _PROJECT_PYTHON if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.SGLANG
 )
 MCORE_EXECUTABLE = (
-    PY_EXECUTABLES.SYSTEM if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.MCORE
+    _PROJECT_PYTHON if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.MCORE
+)
+FSDP_EXECUTABLE = (
+    _PROJECT_PYTHON if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.FSDP
+)
+AUTOMODEL_EXECUTABLE = (
+    _PROJECT_PYTHON if USE_SYSTEM_EXECUTABLE else PY_EXECUTABLES.AUTOMODEL
 )
 
 ACTOR_ENVIRONMENT_REGISTRY: dict[str, str] = {
     "nemo_rl.models.generation.vllm.vllm_worker.VllmGenerationWorker": VLLM_EXECUTABLE,
     "nemo_rl.models.generation.vllm.vllm_worker_async.VllmAsyncGenerationWorker": VLLM_EXECUTABLE,
     "nemo_rl.models.generation.sglang.sglang_worker.SGLangGenerationWorker": SGLANG_EXECUTABLE,
-    "nemo_rl.models.policy.workers.dtensor_policy_worker.DTensorPolicyWorker": PY_EXECUTABLES.FSDP,
-    "nemo_rl.models.policy.workers.dtensor_policy_worker_v2.DTensorPolicyWorkerV2": PY_EXECUTABLES.AUTOMODEL,
+    "nemo_rl.models.policy.workers.dtensor_policy_worker.DTensorPolicyWorker": FSDP_EXECUTABLE,
+    "nemo_rl.models.policy.workers.dtensor_policy_worker_v2.DTensorPolicyWorkerV2": AUTOMODEL_EXECUTABLE,
     "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker": MCORE_EXECUTABLE,
     "nemo_rl.environments.math_environment.MathEnvironment": PY_EXECUTABLES.SYSTEM,
     "nemo_rl.environments.math_environment.MathMultiRewardEnvironment": PY_EXECUTABLES.SYSTEM,
