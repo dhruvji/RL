@@ -1,12 +1,28 @@
 defaults: ../../sft.yaml
 sft:
   max_num_steps: 100
+  # MoE + long context: keep validation batch modest (inherits 32 from ../../sft.yaml otherwise).
+  val_global_batch_size: 8
 checkpointing:
   enabled: false
 policy:
   model_name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16
+  # One sample per GPU; global batch = 8 matches 8 ranks (see train_micro_batch_size).
   train_global_batch_size: 8
+  train_micro_batch_size: 1
   max_total_sequence_length: 2048
+  dtensor_cfg:
+    # Shard experts across 8 GPUs (default EP=1 replicates all experts per GPU and OOMs fast).
+    expert_parallel_size: 8
+    # Saves activation memory on backward; required mesh: (dp*cp) % ep == 0 (8 % 8 here).
+    activation_checkpointing: true
+    # Mitigate allocator fragmentation after large FSDP collectives.
+    clear_cache_every_n_steps: 50
+    # Nemotron-H loads via HuggingFace trust_remote_code; TE/DeepEP ``BackendConfig`` in
+    # automodel_kwargs only applies to NeMo ModelRegistry MoE models (e.g. Qwen3Moe, Glm4Moe).
+    # For that stack see examples/configs/recipes/llm/grpo-moonlight-16b-automodel-1n8g-ep8.yaml.
+    env_vars:
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
 logger:
   wandb:
     project: nemo-rl
