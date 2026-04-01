@@ -18,6 +18,7 @@ import os
 from typing import Any, Optional
 
 import torch
+from torch.backends import cuda
 from accelerate import init_empty_weights
 from hydra.utils import get_class
 from nemo_automodel import NeMoAutoModelForSequenceClassification
@@ -388,7 +389,12 @@ def setup_model_and_optimizer(
     if "use_liger_kernel" not in automodel_kwargs:
         automodel_kwargs["use_liger_kernel"] = False
 
-    # Determine SDPA method for activation checkpointing and CP
+    # SDPA backend order for nemo_automodel's _patch_attention (sdpa_kernel wrapper).
+    # Do not pass sdpa_method=None: automodel defaults to CUDNN_ATTENTION first, which
+    # runs inside sdpa_kernel(...) and overrides torch.backends.cuda.enable_cudnn_sdp(False),
+    # and can crash when system libcudnn mismatches the PyTorch wheel (e.g. cudnnGetLibConfig).
+    # For activation_checkpointing, cuDNN must also stay disabled so recomputation matches
+    # forward ("Recomputed values have different metadata...").
     from torch.nn.attention import SDPBackend
 
     if cp_size > 1:
@@ -398,18 +404,15 @@ def setup_model_and_optimizer(
             SDPBackend.FLASH_ATTENTION,
             SDPBackend.EFFICIENT_ATTENTION,
         ]
-    elif config["dtensor_cfg"]["activation_checkpointing"]:
-        # For activation checkpointing, we must disable the cudnn SDPA backend because
-        # it may not be selected during recomputation.
-        # In that case, we will get the following error:
-        # "Recomputed values have different metadata than during forward pass."
+    else:
         sdpa_method = [
             SDPBackend.FLASH_ATTENTION,
             SDPBackend.EFFICIENT_ATTENTION,
             SDPBackend.MATH,
         ]
-    else:
-        sdpa_method = None
+
+    # Belt-and-suspenders: disable cuDNN SDPA at the PyTorch level as well.
+    cuda.enable_cudnn_sdp(False)
 
     # Initialize empty model
     with init_empty_weights():
@@ -424,13 +427,6 @@ def setup_model_and_optimizer(
         )
         if lora_enabled:
             apply_lora_to_linear_modules(model, peft_config)
-
-    # For activation checkpointing, we also must globally disable the cudnn SDPA backend
-    # to ensure that cudnn does not get selected during recomputation.
-    if config["dtensor_cfg"]["activation_checkpointing"]:
-        from torch.backends import cuda
-
-        cuda.enable_cudnn_sdp(False)
 
     # Store original state dict keys
     model_state_dict_keys = list(model.state_dict().keys())

@@ -1380,18 +1380,15 @@ class TestSetupModelAndOptimizer:
 
         mock_config["dtensor_cfg"]["activation_checkpointing"] = True
 
-        with patch(
-            "nemo_rl.models.automodel.setup.torch.backends.cuda"
-        ) as mock_torch_cuda:
-            setup_model_and_optimizer(
-                config=mock_config,
-                tokenizer=mock_tokenizer,
-                runtime_config=mock_runtime_config,
-                distributed_manager=mock_distributed_manager,
-                checkpoint_manager=mock_checkpoint_manager,
-            )
+        setup_model_and_optimizer(
+            config=mock_config,
+            tokenizer=mock_tokenizer,
+            runtime_config=mock_runtime_config,
+            distributed_manager=mock_distributed_manager,
+            checkpoint_manager=mock_checkpoint_manager,
+        )
 
-            mock_torch_cuda.enable_cudnn_sdp.assert_called_with(False)
+        mock_cuda.enable_cudnn_sdp.assert_called_with(False)
 
     @patch("nemo_rl.models.automodel.setup.torch.optim.lr_scheduler.LambdaLR")
     @patch("nemo_rl.models.automodel.setup.torch.distributed.get_rank")
