@@ -1,12 +1,10 @@
-defaults: ../../sft.yaml
+defaults: examples/configs/sft.yaml
 sft:
-  max_num_steps: 6000
+  max_num_steps: 100
   # MoE + long context: keep validation batch modest (inherits 32 from ../../sft.yaml otherwise).
   val_global_batch_size: 8
 checkpointing:
-  enabled: true
-  checkpoint_dir: /scratch/dhruv/sft/sft-nanov3-30BA3B-1n8g
-  save_period: 500
+  enabled: false
 policy:
   model_name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16
   # One sample per GPU; global batch = 8 matches 8 ranks (see train_micro_batch_size).
@@ -25,20 +23,19 @@ policy:
     # For that stack see examples/configs/recipes/llm/grpo-moonlight-16b-automodel-1n8g-ep8.yaml.
     env_vars:
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+data:
+  train:
+    # dataset_name: nemotron_sft
+    dataset_name: ResponseDataset
 logger:
-  log_dir: /scratch/dhruv/sft/sft-nanov3-30BA3B-1n8g-logs
   wandb:
     project: nemo-rl
     name: sft-nanov3-30BA3B-1n8g
   tensorboard:
-    log_dir: /scratch/dhruv/sft/sft-nanov3-30BA3B-1n8g-logs
+    log_dir: tb_logs-sft-nanov3-30BA3B-1n8g
   mlflow:
     run_name: sft-nanov3-30BA3B-1n8g
 cluster:
   gpus_per_node: 8
   num_nodes: 1
 
-
-# export TORCH_CUDNN_SDPA_ENABLED=0
-# export NEMO_RL_PY_EXECUTABLES_SYSTEM=1
-# uv run examples/run_sft.py --config examples/configs/recipes/llm/sft-nanov3-30BA3B-1n8g.yaml
